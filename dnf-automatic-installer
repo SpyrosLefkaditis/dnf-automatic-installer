@@ -1,0 +1,75 @@
+#!/bin/bash
+
+echo "== DNF Automatic Installer =="
+
+# Ask for update type
+echo "Which update type do you want?"
+select update_type in "default (all updates)" "security (only security updates)"; do
+    case $REPLY in
+        1) UPGRADE_TYPE="default"; break ;;
+        2) UPGRADE_TYPE="security"; break ;;
+        *) echo "Invalid option, choose 1 or 2." ;;
+    esac
+done
+
+# Ask for apply updates
+echo "Do you want updates to be applied automatically? (yes/no)"
+read -r APPLY_UPDATES
+APPLY_UPDATES=${APPLY_UPDATES,,}  # lowercase
+
+# Ask for email
+echo "Enter the email address where update reports should be sent:"
+read -r EMAIL_TO
+
+# Ask for time
+echo "Enter the HOUR (0–23) when you want automatic updates to run:"
+read -r HOUR
+echo "Enter the MINUTE (0–59) when you want it to run:"
+read -r MINUTE
+
+# Install dnf-automatic
+echo "[+] Installing dnf-automatic..."
+sudo dnf install -y dnf-automatic
+
+# Backup original config
+sudo cp /etc/dnf/automatic.conf /etc/dnf/automatic.conf.bak
+
+# Update config
+echo "[+] Configuring /etc/dnf/automatic.conf..."
+sudo tee /etc/dnf/automatic.conf > /dev/null <<EOF
+[commands]
+upgrade_type = $UPGRADE_TYPE
+apply_updates = $APPLY_UPDATES
+
+[emitters]
+emit_via = email
+
+[email]
+email_from = root@localhost
+email_to = $EMAIL_TO
+email_host = localhost
+
+[base]
+debuglevel = 1
+EOF
+
+# Enable timer
+echo "[+] Enabling dnf-automatic.timer..."
+sudo systemctl enable --now dnf-automatic.timer
+
+# Set custom time using systemd override
+echo "[+] Setting timer to run at $HOUR:$MINUTE..."
+sudo mkdir -p /etc/systemd/system/dnf-automatic.timer.d
+sudo tee /etc/systemd/system/dnf-automatic.timer.d/override.conf > /dev/null <<EOF
+[Timer]
+OnCalendar=
+OnCalendar=*-*-* $HOUR:$MINUTE:00
+EOF
+
+# Reload systemd and restart timer
+sudo systemctl daemon-reexec
+sudo systemctl daemon-reload
+sudo systemctl restart dnf-automatic.timer
+
+echo "✅ Setup complete!"
+systemctl status dnf-automatic.timer
